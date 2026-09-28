@@ -9,18 +9,18 @@ def sample_disturbance(N, c_bar_d, mode, rng):
         return np.full(N + 1, c_bar_d)
     elif mode == "crash":
         d = np.full(N + 1, c_bar_d)
-        d[0] = -c_bar_d  # Leader headwind, followers tailwind
+        d[0] = -c_bar_d
         return d
     raise ValueError(f"invalid")
 
 def dynamics(s, state, N, d_vec, params, use_cbf=False, u_clip=None):
     t = state[:N + 1]
     v = state[N + 1:]
+    
+    # Safe parameters
     v_ref = params.get("v_ref", config.V_REF)
     tau_c = params.get("tau_c", config.TAU_C)
     s0 = params.get("s0", config.S0)
-
-    # Safe CBF parameter
     delta_min = params.get("delta_min", config.DELTA_MIN)
     gamma_cbf = params.get("gamma_cbf", config.GAMMA_CBF)
     alpha_cbf = params.get("alpha_cbf", config.ALPHA_CBF)
@@ -47,7 +47,10 @@ def dynamics(s, state, N, d_vec, params, use_cbf=False, u_clip=None):
                 Delta[i], delta_min, gamma_cbf, alpha_cbf, c_bar_d
             )
             h_vals[i] = h_i
-            u_applied[i] = np.clip(u_nom[i], -u_clip, min(u_clip, u_safe)) if u_clip is not None else min(u_nom[i], u_safe)
+            if u_clip is not None:
+                u_applied[i] = np.clip(u_nom[i], -u_clip, min(u_clip, u_safe))
+            else:
+                u_applied[i] = min(u_nom[i], u_safe)
         else:
             h_vals[i] = (Delta[i] - delta_min) + gamma_cbf * (e[i] - e[i - 1])
             u_applied[i] = np.clip(u_nom[i], -u_clip, u_clip) if u_clip is not None else u_nom[i]
@@ -67,18 +70,18 @@ def run_simulation(N, l, ds, params, eps, mode, rng, use_cbf=False, u_clip=None)
     t0 = np.zeros(N + 1)
     t0[0] = eps
     for i in range(1, N + 1):
-        t0[i] = t0[i - 1] + params["tau_c"] + eps
-    v0 = np.full(N + 1, params["v_ref"])
+        t0[i] = t0[i - 1] + params.get("tau_c", config.TAU_C) + eps
+    v0 = np.full(N + 1, params.get("v_ref", config.V_REF))
 
     n_steps = int(np.ceil(l / ds))
-    s_vals = params["s0"] + np.arange(n_steps + 1) * ds
+    s_vals = params.get("s0", config.S0) + np.arange(n_steps + 1) * ds
     states = np.zeros((n_steps + 1, 2 * (N + 1)))
     u_hist = np.zeros((n_steps, N + 1))
     h_hist = np.zeros((n_steps, N + 1))
     states[0] = np.concatenate([t0, v0])
 
     for k in range(n_steps):
-        d_vec = sample_disturbance(N, params["c_bar_d"], mode, rng)
+        d_vec = sample_disturbance(N, params.get("c_bar_d", config.C_BAR_D), mode, rng)
         states[k + 1], u_hist[k], h_hist[k] = rk4_step(s_vals[k], states[k], ds, N, d_vec, params, use_cbf, u_clip)
 
     return s_vals, states, u_hist, h_hist

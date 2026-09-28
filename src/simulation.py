@@ -47,13 +47,15 @@ def dynamics(s, state, N, d_vec, params, use_cbf=False, u_clip=None):
                 Delta[i], delta_min, gamma_cbf, alpha_cbf, c_bar_d
             )
             h_vals[i] = h_i
+            
+            # 1. CBF enforces safety upper bound:
+            u_filtered = min(u_nom[i], u_safe)
+            
+            # 2. Physical motor clips to actuator limits:
             if u_clip is not None:
-                u_applied[i] = np.clip(u_nom[i], -u_clip, min(u_clip, u_safe))
+                u_applied[i] = np.clip(u_filtered, -u_clip, u_clip)
             else:
-                u_applied[i] = min(u_nom[i], u_safe)
-        else:
-            h_vals[i] = (Delta[i] - delta_min) + gamma_cbf * (e[i] - e[i - 1])
-            u_applied[i] = np.clip(u_nom[i], -u_clip, u_clip) if u_clip is not None else u_nom[i]
+                u_applied[i] = u_filtered
 
     dt = 1.0 / v
     dv = (u_applied + d_vec) / v

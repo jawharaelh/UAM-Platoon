@@ -1,30 +1,11 @@
-"""
-Three-stage comparison
-  1. Unconstrained: plain string-stability controller, no actuator limit, no CBF
-  2. Saturated Actuation (No CBF): same controller, hard-clipped at the actuator limit U_MAX, no proactive safety logic
-  3. Saturated Actuation w/ CBF: actuator-clipped & CBF safety filter active
-
-plotsthe minimum takeoff-delay epsilon, the smallest barrier value h_i
-reaches along the trajectory, and the resulting throughput 1/(tau_c+epsilon).
-
-The three stages only diverge once the disturbance is large enough to
-make saturation/CBF intervention happen at all
-
-epsilon is measured EMPIRICALLY rather than from the theorem's closed-form fixed point: it is
-defined (following sec:take-off-epsilon) as the asymptotic gap-deviation floor |Delta_i(s)|, so
-we run each stage once with zero initial delay and read off the worst |Delta_i| over the last
-10% of the corridor
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 
 from src import config
 from src.simulation import run_simulation
 
-C_BAR_D = 3.0
+C_BAR_D = 1.55  
 TAIL_FRACTION = 0.1
-
 
 def empirical_epsilon(s_vals, states, N, tau_c):
     t = states[:-1, :N + 1]
@@ -32,12 +13,13 @@ def empirical_epsilon(s_vals, states, N, tau_c):
     Delta = np.diff(t[tail_start:], axis=1) - tau_c
     return float(np.max(np.abs(Delta)))
 
-
 def main():
-    base_params = dict(v_ref=config.V_REF, tau_c=config.TAU_C, s0=config.S0,
-                        kappa=config.KAPPA, kappa0=config.KAPPA0, K=config.K_GAIN,
-                        delta_min=config.DELTA_MIN, gamma_cbf=config.GAMMA_CBF,
-                        alpha_cbf=config.ALPHA_CBF, c_bar_d=C_BAR_D)
+    base_params = dict(
+        v_ref=config.V_REF, tau_c=config.TAU_C, s0=config.S0,
+        kappa=config.KAPPA, kappa0=config.KAPPA0, K=config.K_GAIN,
+        delta_min=config.DELTA_MIN, gamma_cbf=config.GAMMA_CBF,
+        alpha_cbf=config.ALPHA_CBF, c_bar_d=C_BAR_D
+    )
 
     stage_defs = [
         ("1. Unconstrained", dict(use_cbf=False, u_clip=None)),
@@ -48,9 +30,19 @@ def main():
     results = {}
     for label, sim_kwargs in stage_defs:
         rng = np.random.default_rng(42)
-        s_vals, states, u_hist, h_hist = run_simulation(config.N_MAX, config.L, config.DS, base_params, 0.0, "crash", rng, **sim_kwargs)
+        s_vals, states, u_hist, h_hist = run_simulation(
+            config.N_MAX, config.L, config.DS, base_params, 0.0, "crash", rng, **sim_kwargs
+        )
         eps = empirical_epsilon(s_vals, states, config.N_MAX, config.TAU_C)
-        h_min = float(np.min(h_hist[:, 1:]))
+        
+        # Calculate true h_min manually to guarantee accuracy across all stages:
+        t = states[:, :config.N_MAX + 1]
+        v = states[:, config.N_MAX + 1:]
+        e = 1.0 / v - 1.0 / config.V_REF
+        Delta = np.diff(t, axis=1) - config.TAU_C
+        h_all = (Delta - config.DELTA_MIN) + config.GAMMA_CBF * np.diff(e, axis=1)
+        h_min = float(np.min(h_all))
+
         throughput = 1.0 / (config.TAU_C + eps)
         max_u = float(np.max(np.abs(u_hist)))
 
@@ -69,43 +61,51 @@ def main():
 
     def label_bars(ax, values, fmt="{:.3g}"):
         ylo, yhi = ax.get_ylim()
-        pad = 0.03 * (yhi - ylo)
+        pad = 0.04 * (yhi - ylo)
         for i, val in enumerate(values):
             offset = pad if val >= 0 else -pad
             va = "bottom" if val >= 0 else "top"
-            ax.text(i, val + offset, fmt.format(val), ha="center", va=va, fontsize=9)
+            ax.text(i, val + offset, fmt.format(val), ha="center", va=va, fontsize=9, fontweight="bold")
 
-    fig, axes = plt.subplots(1, 4, figsize=(15, 4.5))
+    fig, axes = plt.subplots(1, 4, figsize=(19, 4.8))
+
+    # 1. Epsilon
     axes[0].bar(short_labels, eps_vals, color="tab:blue")
-    axes[0].set_title(r"Minimum $\epsilon$ (empirical gap-deviation floor)")
-    axes[0].tick_params(axis="x", rotation=20)
+    axes[0].set_title(r"Spacing Delay $\epsilon$ (s)")
+    axes[0].set_xticks(range(len(short_labels)))
+    axes[0].set_xticklabels(short_labels, rotation=20, ha="right")
     label_bars(axes[0], eps_vals)
 
+    # 2. Safety h_min
     axes[1].bar(short_labels, h_vals, color="tab:orange")
-    axes[1].axhline(0, color="red", linestyle="--", label="safety boundary")
-    axes[1].set_title(r"Smallest $h$")
-    axes[1].legend()
-    axes[1].tick_params(axis="x", rotation=20)
+    axes[1].axhline(0, color="red", linestyle="--", linewidth=1.5, label="Safety Limit ($h=0$)")
+    axes[1].set_title(r"Worst-Case Safety $\min h_i$")
+    axes[1].set_xticks(range(len(short_labels)))
+    axes[1].set_xticklabels(short_labels, rotation=20, ha="right")
+    axes[1].legend(loc="lower left")
     label_bars(axes[1], h_vals)
 
+    # 3. Throughput
     axes[2].bar(short_labels, tp_vals, color="tab:green")
-    axes[2].axhline(1.0 / config.TAU_C, color="black", linestyle=":", label=r"nominal $1/\tau_c$")
-    axes[2].set_title("Throughput")
-    axes[2].legend()
-    axes[2].tick_params(axis="x", rotation=20)
+    axes[2].axhline(1.0 / config.TAU_C, color="black", linestyle=":", linewidth=1.5, label=r"Nominal $1/\tau_c$")
+    axes[2].set_title("Throughput (veh/s)")
+    axes[2].set_xticks(range(len(short_labels)))
+    axes[2].set_xticklabels(short_labels, rotation=20, ha="right")
+    axes[2].legend(loc="lower left")
     label_bars(axes[2], tp_vals)
 
+    # 4. Control Effort
     axes[3].bar(short_labels, u_vals, color="tab:purple")
     axes[3].axhline(config.U_MAX, color="red", linestyle="--", linewidth=1.5, label=f"Engine Limit ({config.U_MAX})")
     axes[3].set_title(r"Peak Control Effort $\max |u_i|$")
+    axes[3].set_xticks(range(len(short_labels)))
+    axes[3].set_xticklabels(short_labels, rotation=20, ha="right")
     axes[3].legend(loc="upper right")
-    axes[3].tick_params(axis="x", rotation=20)
     label_bars(axes[3], u_vals)
 
-    fig.suptitle(f"Three-stage comparison under disturbance")
+    fig.suptitle(f"Three-Stage Comparative Analysis under Severe Weather ($\\bar{{c}}_d = {C_BAR_D}\\ \\mathrm{{m/s^2}}$)", fontsize=14)
     fig.tight_layout()
     fig.savefig("fig5_three_stage_summary.png", dpi=150)
-
 
 if __name__ == "__main__":
     main()

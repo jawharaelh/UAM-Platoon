@@ -2,13 +2,15 @@
 # Physical and Controller Parameters
 KAPPA = 50.00
 KAPPA0 = 0.99
-K_GAIN = 8.50=
+K_GAIN = 8.50
 TAU_C = 2.0 # Nominal time headway (s)
 V_REF = 2.00 # Reference velocity (m/s)
 N_MAX = 5 # Max followers in platoon
 L = 5000.0 # Corridor length (m)
 S0 = 0.0
 DS = 0.02 # Spatial step
+Q_EXP = 4.0
+OMEGA = 0.50
 
 # Disturbances
 C_BAR_D = 0.10 # Max disturbance bound (m/s^2)

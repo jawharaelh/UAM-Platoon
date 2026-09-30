@@ -15,7 +15,7 @@ def sample_disturbance(N, c_bar_d, mode, rng):
 
 def dynamics(s, state, N, d_vec, params, use_cbf=False, u_clip=None):
     t = state[:N + 1]
-    v = state[N + 1:]
+    v = np.maximum(state[N + 1:], 0.1)
     
     # Safe parameters
     v_ref = params.get("v_ref", config.V_REF)
@@ -32,30 +32,40 @@ def dynamics(s, state, N, d_vec, params, use_cbf=False, u_clip=None):
     for i in range(1, N + 1):
         Delta[i] = t[i] - t[i - 1] - tau_c
 
-    u_nom = compute_nominal_control(s, t, v, e, Delta, s0, v_ref, params["kappa"], params["kappa0"], params["K"])
+    u_nom = compute_nominal_control(s, t, v, e, Delta, s0, v_ref, params["kappa"], params["kappa0"], params["K"], tau_c)
     u_applied = np.zeros(N + 1)
     h_vals = np.zeros(N + 1)
 
-    # Leader
-    u_applied[0] = np.clip(u_nom[0], -u_clip, u_clip) if u_clip is not None else u_nom[0]
 
-    # Followers
+    def apply_clip(u_val):
+        if u_clip is None:
+            return u_val
+        if isinstance(u_clip, (tuple, list)):
+            return np.clip(u_val, u_clip[0], u_clip[1])
+        return np.clip(u_val, -u_clip, u_clip)
+
+    # 1. Leader Control
+    u_applied[0] = apply_clip(u_nom[0])
+
+    # 2. Followers Control
     for i in range(1, N + 1):
+        # Always compute h_i so safety is logged even when CBF is off
+        h_i = (Delta[i] - delta_min) + gamma_cbf * (e[i] - e[i - 1])
+        h_vals[i] = h_i
+
         if use_cbf:
-            u_safe, h_i = compute_cbf_safe_control(
+            u_safe, _ = compute_cbf_safe_control(
                 i, v, e, u_nom[i], u_applied[i - 1], d_vec[i - 1],
                 Delta[i], delta_min, gamma_cbf, alpha_cbf, c_bar_d
             )
-            h_vals[i] = h_i
-            
-            # 1. CBF enforces safety upper bound:
+            # CBF enforces the upper bound on acceleration:
             u_filtered = min(u_nom[i], u_safe)
-            
-            # 2. Physical motor clips to actuator limits:
-            if u_clip is not None:
-                u_applied[i] = np.clip(u_filtered, -u_clip, u_clip)
-            else:
-                u_applied[i] = u_filtered
+        else:
+            # When CBF is False, follow nominal controller!
+            u_filtered = u_nom[i]
+
+        # Apply actuator saturation
+        u_applied[i] = apply_clip(u_filtered)
 
     dt = 1.0 / v
     dv = (u_applied + d_vec) / v

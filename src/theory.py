@@ -3,7 +3,12 @@ import numpy as np
 def compute_theorem_constants(kappa, kappa0, K, N_max, v_ref, c_bar_rho, q=1.0, omega=None):
     b = (np.sqrt(2) + kappa0 * (N_max - 1)) / kappa
     if omega is None:
-        omega = 1 - kappa0 / 2
+        target_pow = 1.0 - kappa0 / 2.0
+        omega = target_pow ** (1.0 / q)
+    else:
+        assert 1 - kappa0 < omega ** q < 1, (
+            f"Invalid choice: requires 1 - kappa0 ({1 - kappa0}) < omega^q ({omega**q}) < 1"
+        )
 
     lam = 0.5 * min(kappa * K, 1.0 / kappa)
     C = 1.0 / (1 - lam * kappa)
@@ -37,3 +42,34 @@ def epsilon_fixed_point(consts, N_max, l, c_bar_d):
     if denom <= 0:
         return None, m, beta_l
     return consts["sigma_Delta"] * c_bar_d / denom, m, beta_l
+
+def check_admissibility(consts, c_bar, c_bar_d, c_bar_rho, eps=None):
+    """
+    Verifies the domain-of-attraction conditions from Theorem 1 and Section VII.
+    """
+    b = consts["b"]
+    v_ref = consts.get("v_ref", config.V_REF)
+    kappa = consts["kappa"]
+    kappa0 = consts["kappa0"]
+    K = consts["K"]
+    L = consts["L"]
+    Ax = consts["Ax"]
+
+    c_rho_max = 1.0 / (b * v_ref)
+    cond1 = c_bar_rho < c_rho_max
+    lhs_23 = Ax * c_bar + (L / (kappa * K)) * (2.0 + 2.0 / kappa0) * c_bar_d
+    cond2 = lhs_23 < c_bar_rho
+
+    cond3 = True
+    if eps is not None:
+        m = (config.N_MAX - 1) * kappa0 + 2
+        cond3 = (m * eps < c_bar)
+
+    return {
+        "c_rho_valid": cond1,
+        "c_rho_max": c_rho_max,
+        "eq23_valid": cond2,
+        "eq23_lhs": lhs_23,
+        "initial_eps_valid": cond3,
+        "all_valid": cond1 and cond2 and cond3
+    }

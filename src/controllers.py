@@ -1,6 +1,6 @@
 import numpy as np
 
-def compute_nominal_control(s, t, v, e, Delta, s0, v_ref, kappa, kappa0, K):
+def compute_nominal_control(s, t, v, e, Delta, s0, v_ref, kappa, kappa0, K, tau_c):
     N = len(t) - 1
     u_nom = np.zeros(N + 1)
     
@@ -10,7 +10,7 @@ def compute_nominal_control(s, t, v, e, Delta, s0, v_ref, kappa, kappa0, K):
     
     # Followers
     for i in range(1, N + 1):
-        Delta_i0 = t[i] - t[0] - i * (t[1] - t[0] - Delta[1])  # i * tau_c
+        Delta_i0 = t[i] - t[0] - i * tau_c
         delta_i = (1 - kappa0) * Delta[i] + kappa0 * Delta_i0 + kappa * e[i]
         u_nom[i] = (v[i] ** 3 / kappa) * (e[i] - (1 - kappa0) * e[i - 1] - kappa0 * e[0] + kappa * K * delta_i)
         
